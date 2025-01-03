@@ -1,0 +1,10 @@
+# backend/.gitignore
+__pycache__/
+*.py[cod]
+*.env
+venv/
+.env
+.env.development
+.env.production
+.env.staging
+
