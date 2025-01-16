@@ -19,3 +19,8 @@ app.add_middleware(
 app.include_router(auth.router, prefix="/auth", tags=["auth"])
 app.include_router(cv_analysis.router, prefix="/cv", tags=["cv"])
 app.include_router(payment.router, prefix="/payment", tags=["payment"])
+
+# Adicionar endpoint de health check
+@app.get("/health")
+async def health_check():
+    return {"status": "ok"}
