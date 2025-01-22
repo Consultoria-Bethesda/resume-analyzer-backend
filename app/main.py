@@ -1,6 +1,9 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from app.config.settings import settings
+from app.routes import auth_router, cv_router, user_router, payment_router
+from app.middleware.session import SessionMiddleware
+from app.middleware.security import SecurityMiddleware
 
 app = FastAPI()
 
@@ -23,10 +26,10 @@ async def health_check():
     }
 
 # Registrar rotas
-app.include_router(auth.router, prefix="/auth", tags=["Authentication"])
-app.include_router(cv_analysis.router, prefix="/cv", tags=["CV Analysis"])
-app.include_router(user.router, prefix="/users", tags=["Users"])
-app.include_router(payment.router, prefix="/payments", tags=["Payments"])
+app.include_router(auth_router, prefix="/auth", tags=["Authentication"])
+app.include_router(cv_router, prefix="/cv", tags=["CV Analysis"])
+app.include_router(user_router, prefix="/users", tags=["Users"])
+app.include_router(payment_router, prefix="/payments", tags=["Payments"])
 
 # Adiciona o SecurityMiddleware
 app.add_middleware(SecurityMiddleware)
