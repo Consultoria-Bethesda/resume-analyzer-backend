@@ -21,4 +21,4 @@ python scripts/init_db.py
 
 # Iniciar a aplicação
 echo "Iniciando aplicação..."
-exec uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8000}
+exec uvicorn app.main:app --host 0.0.0.0 --port "${PORT:-8000}" --reload

@@ -1,5 +1,5 @@
-from fastapi import APIRouter, Depends, HTTPException, status, BackgroundTasks
-from fastapi.responses import RedirectResponse, JSONResponse
+from fastapi import APIRouter, Depends, HTTPException, Response
+from fastapi.responses import JSONResponse, RedirectResponse
 from sqlalchemy.orm import Session
 from app.database import get_db
 from app.models.user import User
@@ -30,15 +30,34 @@ class LoginData(BaseModel):
 
 @router.get("/google/login")
 async def login_google():
-    return {"url": f"https://accounts.google.com/o/oauth2/v2/auth?response_type=code&client_id={settings.GOOGLE_CLIENT_ID}&redirect_uri={settings.BASE_URL}/auth/google/callback&scope=openid%20email%20profile"}
+    try:
+        auth_url = f"https://accounts.google.com/o/oauth2/v2/auth"
+        params = {
+            "response_type": "code",
+            "client_id": settings.GOOGLE_CLIENT_ID,
+            "redirect_uri": f"{settings.BASE_URL}/auth/google/callback",
+            "scope": "openid email profile",
+            "access_type": "offline",
+            "prompt": "consent"
+        }
+        
+        # Construir URL com parâmetros
+        query_string = "&".join(f"{k}={v}" for k, v in params.items())
+        full_url = f"{auth_url}?{query_string}"
+        
+        return JSONResponse(content={"url": full_url})
+    except Exception as e:
+        logger.error(f"Erro ao gerar URL do Google: {str(e)}")
+        raise HTTPException(status_code=500, detail="Erro ao iniciar login com Google")
 
 @router.get("/google/callback")
 async def google_callback(code: str, db: Session = Depends(get_db)):
     try:
         logger.info("=== Iniciando callback do Google ===")
         
+        # 1. Trocar código por token
         token_url = "https://oauth2.googleapis.com/token"
-        data = {
+        token_data = {
             "code": code,
             "client_id": settings.GOOGLE_CLIENT_ID,
             "client_secret": settings.GOOGLE_CLIENT_SECRET,
@@ -46,30 +65,43 @@ async def google_callback(code: str, db: Session = Depends(get_db)):
             "grant_type": "authorization_code"
         }
         
-        logger.info("Obtendo token do Google")
-        response = requests.post(token_url, data=data)
+        token_response = requests.post(token_url, data=token_data)
         
-        logger.info(f"Resposta do Google: {response.status_code}")
-        logger.info(f"Conteúdo da resposta: {response.text}")
+        if not token_response.ok:
+            logger.error(f"Erro ao obter token: {token_response.text}")
+            return RedirectResponse(
+                url=f"{settings.FRONTEND_URL}/login?error=google_auth_failed",
+                status_code=302
+            )
         
-        access_token = response.json().get("access_token")
+        token_json = token_response.json()
+        access_token = token_json.get("access_token")
         
         if not access_token:
-            logger.error("Falha ao obter access_token do Google")
-            logger.error(f"Detalhes do erro: {response.text}")
-            raise HTTPException(status_code=400, detail="Falha na autenticação com Google")
+            logger.error("Access token não encontrado na resposta")
+            return RedirectResponse(
+                url=f"{settings.FRONTEND_URL}/login?error=no_access_token",
+                status_code=302
+            )
         
-        logger.info("Obtendo informações do usuário")
-        user_info = requests.get(
+        # 2. Obter informações do usuário
+        user_info_response = requests.get(
             "https://www.googleapis.com/oauth2/v2/userinfo",
             headers={"Authorization": f"Bearer {access_token}"}
-        ).json()
+        )
         
-        logger.info(f"Email do usuário: {user_info.get('email')}")
+        if not user_info_response.ok:
+            logger.error(f"Erro ao obter informações do usuário: {user_info_response.text}")
+            return RedirectResponse(
+                url=f"{settings.FRONTEND_URL}/login?error=user_info_failed",
+                status_code=302
+            )
         
+        user_info = user_info_response.json()
+        
+        # 3. Criar ou atualizar usuário
         user = db.query(User).filter(User.email == user_info["email"]).first()
         if not user:
-            logger.info("Criando novo usuário")
             user = User(
                 email=user_info["email"],
                 name=user_info.get("name"),
@@ -79,17 +111,15 @@ async def google_callback(code: str, db: Session = Depends(get_db)):
             db.add(user)
             db.commit()
             db.refresh(user)
-            logger.info(f"Novo usuário criado com ID: {user.id}")
-        else:
-            logger.info(f"Usuário existente encontrado com ID: {user.id}")
         
+        # 4. Gerar JWT
         jwt_token = create_access_token(data={"sub": user.email})
-        logger.info(f"Token JWT gerado com sucesso: {jwt_token[:10]}...")
         
+        # 5. Redirecionar para frontend
         redirect_url = f"{settings.FRONTEND_URL}?token={jwt_token}"
-        logger.info(f"Redirecionando para: {redirect_url}")
+        response = RedirectResponse(url=redirect_url, status_code=302)
         
-        response = RedirectResponse(url=redirect_url, status_code=302)  # Mudando para 302 Found
+        # 6. Configurar cookie
         response.set_cookie(
             key="session",
             value=jwt_token,

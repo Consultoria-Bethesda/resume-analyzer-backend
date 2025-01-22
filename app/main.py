@@ -1,15 +1,31 @@
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from app.middleware.security import SecurityMiddleware
-from app.routes import auth_router, cv_router, user_router, payment_router
+from app.routes import auth, cv_analysis, user, payment
 from fastapi.middleware.cors import CORSMiddleware
 from app.database import engine, Base
 from app.config.settings import settings
 from starlette.middleware.sessions import SessionMiddleware
 
-# Importa todos os modelos para garantir que sejam registrados
-from app.models import user, user_credits
+app = FastAPI(
+    title="Resume Analyzer API",
+    description="API para análise de currículos",
+    version="1.0.0"
+)
 
-app = FastAPI()
+# Healthcheck endpoint
+@app.get("/health", tags=["Health"])
+async def health_check():
+    return {
+        "status": "healthy",
+        "version": "1.0.0",
+        "environment": settings.ENVIRONMENT
+    }
+
+# Registrar rotas
+app.include_router(auth.router, prefix="/auth", tags=["Authentication"])
+app.include_router(cv_analysis.router, prefix="/cv", tags=["CV Analysis"])
+app.include_router(user.router, prefix="/users", tags=["Users"])
+app.include_router(payment.router, prefix="/payments", tags=["Payments"])
 
 # Adiciona o SecurityMiddleware
 app.add_middleware(SecurityMiddleware)
@@ -33,12 +49,14 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Incluir rotas
-app.include_router(auth_router, prefix="/auth", tags=["auth"])
-app.include_router(cv_router, prefix="/cv", tags=["cv"])
-app.include_router(user_router, prefix="/user", tags=["user"])
-app.include_router(payment_router, prefix="/payment", tags=["payment"])
+# Tratamento de erros global
+@app.exception_handler(Exception)
+async def global_exception_handler(request, exc):
+    if isinstance(exc, HTTPException):
+        return {"detail": exc.detail}
+    return {"detail": "Internal Server Error"}
 
-# Criar todas as tabelas
-Base.metadata.create_all(bind=engine)
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run(app, host="0.0.0.0", port=int(settings.PORT))
 
