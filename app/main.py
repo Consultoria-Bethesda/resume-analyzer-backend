@@ -1,15 +1,16 @@
-from fastapi import FastAPI, HTTPException
-from app.middleware.security import SecurityMiddleware
-from app.routes import auth, cv_analysis, user, payment
+from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from app.database import engine, Base
 from app.config.settings import settings
-from starlette.middleware.sessions import SessionMiddleware
 
-app = FastAPI(
-    title="Resume Analyzer API",
-    description="API para análise de currículos",
-    version="1.0.0"
+app = FastAPI()
+
+# Configuração CORS
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=[settings.FRONTEND_URL],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
 # Healthcheck endpoint
@@ -38,15 +39,6 @@ app.add_middleware(
     max_age=14 * 24 * 60 * 60,  # 14 dias em segundos
     same_site="lax",
     https_only=settings.ENVIRONMENT == "production"
-)
-
-# Configuração CORS
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=[settings.FRONTEND_URL],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
 )
 
 # Tratamento de erros global

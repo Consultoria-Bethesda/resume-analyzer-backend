@@ -1,5 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException, Response, BackgroundTasks
-from fastapi.responses import JSONResponse, RedirectResponse
+from fastapi.responses import JSONResponse
+from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
 from app.database import get_db
 from app.models.user import User
@@ -31,7 +32,9 @@ class LoginData(BaseModel):
 @router.get("/google/login")
 async def login_google():
     try:
-        auth_url = f"https://accounts.google.com/o/oauth2/v2/auth"
+        logger.info("Iniciando processo de login com Google")
+        auth_url = "https://accounts.google.com/o/oauth2/v2/auth"
+        
         params = {
             "response_type": "code",
             "client_id": settings.GOOGLE_CLIENT_ID,
@@ -41,14 +44,28 @@ async def login_google():
             "prompt": "consent"
         }
         
+        # Log das configurações (sem secrets)
+        logger.info(f"Configurações de auth: client_id={settings.GOOGLE_CLIENT_ID[:10]}..., redirect_uri={params['redirect_uri']}")
+        
         # Construir URL com parâmetros
         query_string = "&".join(f"{k}={v}" for k, v in params.items())
         full_url = f"{auth_url}?{query_string}"
         
-        return JSONResponse(content={"url": full_url})
+        logger.info(f"URL do Google gerada com sucesso: {full_url[:50]}...")
+        
+        return JSONResponse(
+            status_code=200,
+            content={"url": full_url},
+            headers={"Content-Type": "application/json"}
+        )
     except Exception as e:
         logger.error(f"Erro ao gerar URL do Google: {str(e)}")
-        raise HTTPException(status_code=500, detail="Erro ao iniciar login com Google")
+        logger.error(f"Stacktrace completo: {traceback.format_exc()}")
+        return JSONResponse(
+            status_code=500,
+            content={"detail": f"Erro ao iniciar login com Google: {str(e)}"},
+            headers={"Content-Type": "application/json"}
+        )
 
 @router.get("/google/callback")
 async def google_callback(code: str, db: Session = Depends(get_db)):
