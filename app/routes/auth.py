@@ -11,12 +11,14 @@ logger = logging.getLogger(__name__)
 async def login_google():
     try:
         logger.info("Iniciando processo de login com Google")
+        logger.info(f"GOOGLE_CLIENT_ID configurado: {bool(settings.GOOGLE_CLIENT_ID)}")
+        logger.info(f"FRONTEND_URL: {settings.FRONTEND_URL}")
         
         if not settings.GOOGLE_CLIENT_ID:
             logger.error("GOOGLE_CLIENT_ID não configurado")
-            return JSONResponse(
+            raise HTTPException(
                 status_code=500,
-                content={"detail": "Configuração do Google OAuth não encontrada"}
+                detail="Configuração do Google OAuth não encontrada"
             )
 
         # Construir URL do Google OAuth
@@ -40,15 +42,14 @@ async def login_google():
         return JSONResponse(
             content={"url": full_url},
             headers={
-                "Content-Type": "application/json",
                 "Access-Control-Allow-Origin": settings.FRONTEND_URL,
-                "Access-Control-Allow-Credentials": "true"
+                "Access-Control-Allow-Credentials": "true",
             }
         )
         
     except Exception as e:
         logger.error(f"Erro ao gerar URL do Google: {str(e)}")
-        return JSONResponse(
+        raise HTTPException(
             status_code=500,
-            content={"detail": str(e)}
+            detail=str(e)
         )
