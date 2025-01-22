@@ -14,6 +14,7 @@ from bs4 import BeautifulSoup
 import PyPDF2
 import docx
 import io
+from app.utils.keywords_filter import filter_relevant_keywords
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -105,65 +106,61 @@ async def analyze_resume(resume_text: str, job_descriptions: List[str]) -> dict:
 Analise o currículo e as descrições das vagas seguindo EXATAMENTE estas regras:
 
 REGRAS DE EXTRAÇÃO DE PALAVRAS-CHAVE:
-1. Extraia APENAS palavras-chave técnicas e profissionais relevantes das vagas, incluindo:
-   - Requisitos técnicos e comportamentais
-   - Ferramentas e tecnologias
-   - Metodologias e frameworks
-   - Responsabilidades e atribuições principais
-   - Conhecimentos específicos do domínio
-   - Certificações e qualificações relevantes
-   - Habilidades técnicas e soft skills
-   - Experiências específicas requeridas
+1. Extraia TODAS as palavras-chave relevantes das vagas, considerando:
 
-2. NÃO inclua como palavras-chave:
-   - Benefícios e remuneração
-   - Modalidade de trabalho (remoto, híbrido, etc)
-   - Localização e horário
-   - Informações sobre contratação
-   - Outros benefícios e facilidades
+OBRIGATORIAMENTE INCLUIR:
+- Cargos e funções específicas mencionadas
+- Tecnologias, ferramentas e sistemas
+- Metodologias e frameworks de trabalho
+- Certificações e qualificações técnicas
+- Conhecimentos específicos do setor/indústria
+- Responsabilidades e atribuições chave
+- Competências técnicas específicas
+- Processos e práticas de trabalho relevantes
+- Termos técnicos do setor
+- Habilidades específicas requeridas
+- Experiências profissionais relevantes
+- Conhecimentos de negócio específicos
+- Áreas de especialização
 
-3. Regras de formatação:
-   - REMOVA DUPLICATAS, mantendo a primeira ocorrência
-   - Mantenha a forma mais completa dos termos
-   - Preserve termos compostos quando relevantes
-   - Mantenha acrônimos apenas quando são a forma principal de uso
+REGRAS DE EXTRAÇÃO:
+- Capture termos técnicos mesmo quando aparecem sozinhos (ex: SQL, AWS)
+- Mantenha termos compostos completos (ex: "gestão de projetos", não separar em "gestão" e "projetos")
+- Inclua variações relevantes de termos (ex: se menciona "Product Owner" e "PO", inclua ambos)
+- Capture termos específicos do setor/indústria
+- Mantenha siglas e acrônimos relevantes (ex: KPI, B2B)
+- Inclua competências comportamentais específicas e relevantes
 
-4. Foque em extrair:
-   - Competências técnicas específicas
-   - Habilidades profissionais requeridas
-   - Conhecimentos de domínio necessários
-   - Responsabilidades principais da função
-   - Experiências relevantes solicitadas
-
-Retorne APENAS o JSON abaixo preenchido:
-
-{{
-"introduction": "Análise detalhada do currículo de [NOME] para as vagas de [CARGO]. [Breve resumo do perfil e adequação]",
-"extracted_keywords": {{
-"all_keywords": [
-"Lista COMPLETA de palavras-chave ÚNICAS encontradas nas vagas (sem duplicatas, mantendo a grafia original da primeira ocorrência)"
-]
-}},
-"keywords": {{
-"present": [
-"[termo exato único]"
-],
-"missing": [
-"[termo exato único]"
-]
-}},
-"recommendations": [
-"Lista de recomendações específicas e acionáveis para melhorar o currículo"
-],
-"conclusion": "Conclusão objetiva sobre a adequação do currículo às vagas e principais pontos de melhoria"
-}}
+OBRIGATORIAMENTE EXCLUIR:
+- Benefícios (vale refeição, plano de saúde, etc)
+- Modalidade de trabalho (remoto, híbrido)
+- Localização e horário
+- Informações sobre contratação
+- Remuneração e comissões
+- Outros benefícios (cursos, dress code)
+- Informações sobre a empresa
+- Prazos e datas
+- Idiomas
+- Termos genéricos sem contexto específico
 
 CURRÍCULO:
 {resume_text}
 
 DESCRIÇÕES DAS VAGAS:
-{json.dumps(job_descriptions)}
-"""
+{chr(10).join(job_descriptions)}
+
+Retorne um JSON com a seguinte estrutura:
+{{
+    "extracted_keywords": {{
+        "all_keywords": ["lista de todas as palavras-chave extraídas das vagas"]
+    }},
+    "keywords": {{
+        "present": ["palavras-chave encontradas no currículo - Em: seção sugerida"],
+        "missing": ["palavras-chave não encontradas no currículo - Add em: seção sugerida"]
+    }},
+    "recommendations": ["lista de recomendações práticas para melhorar o currículo"],
+    "conclusion": "conclusão geral da análise"
+}}"""
 
         logger.info("Enviando requisição para OpenAI")
         
@@ -188,7 +185,26 @@ DESCRIÇÕES DAS VAGAS:
             analysis_result = json.loads(response.choices[0].message.content)
             logger.info("JSON decodificado com sucesso")
             
-            required_keys = ["introduction", "extracted_keywords", "keywords", "recommendations", "conclusion"]
+            # Filtrar as palavras-chave para remover benefícios e informações adicionais
+            if 'extracted_keywords' in analysis_result and 'all_keywords' in analysis_result['extracted_keywords']:
+                filtered_keywords = filter_relevant_keywords(analysis_result['extracted_keywords']['all_keywords'])
+                analysis_result['extracted_keywords']['all_keywords'] = filtered_keywords
+                
+                # Atualizar as listas de palavras presentes e ausentes com base nas palavras filtradas
+                if 'keywords' in analysis_result:
+                    if 'present' in analysis_result['keywords']:
+                        analysis_result['keywords']['present'] = [
+                            kw for kw in analysis_result['keywords']['present']
+                            if any(filtered_kw in kw for filtered_kw in filtered_keywords)
+                        ]
+                    
+                    if 'missing' in analysis_result['keywords']:
+                        analysis_result['keywords']['missing'] = [
+                            kw for kw in analysis_result['keywords']['missing']
+                            if any(filtered_kw in kw for filtered_kw in filtered_keywords)
+                        ]
+            
+            required_keys = ["extracted_keywords", "keywords", "recommendations", "conclusion"]
             if all(key in analysis_result for key in required_keys):
                 return analysis_result
             else:
@@ -196,36 +212,17 @@ DESCRIÇÕES DAS VAGAS:
                 missing_keys = [key for key in required_keys if key not in analysis_result]
                 logger.error(f"Chaves faltantes: {missing_keys}")
                 return {
-                    "error": True,
-                    "introduction": "Análise incompleta do currículo.",
-                    "extracted_keywords": {"all_keywords": []},
-                    "keywords": {"present": [], "missing": []},
-                    "recommendations": ["A análise não pôde ser completada. Por favor, tente novamente."],
-                    "conclusion": "Não foi possível concluir a análise completamente."
+                    "error": "Resposta incompleta da análise",
+                    "missing_keys": missing_keys
                 }
 
         except json.JSONDecodeError as e:
-            logger.error(f"Erro ao decodificar JSON: {str(e)}")
-            logger.error(f"Conteúdo que causou erro: {response.choices[0].message.content}")
-            return {
-                "error": True,
-                "introduction": "Erro ao processar a análise do currículo.",
-                "extracted_keywords": {"all_keywords": []},
-                "keywords": {"present": [], "missing": []},
-                "recommendations": ["Houve um erro ao processar sua análise. Por favor, tente novamente."],
-                "conclusion": "A análise não pôde ser concluída devido a um erro técnico."
-            }
+            logger.error(f"Erro ao decodificar JSON: {e}")
+            return {"error": "Erro ao processar resposta da análise"}
 
     except Exception as e:
-        logger.error(f"Erro geral na análise: {str(e)}")
-        return {
-            "error": True,
-            "introduction": "Não foi possível processar a análise do currículo.",
-            "extracted_keywords": {"all_keywords": []},
-            "keywords": {"present": [], "missing": []},
-            "recommendations": ["Por favor, tente novamente. Se o erro persistir, entre em contato com o suporte."],
-            "conclusion": "Não foi possível concluir a análise."
-        }
+        logger.error(f"Erro geral na análise: {e}")
+        return {"error": f"Erro geral na análise: {str(e)}"}
 
 def normalize_text_for_comparison(text: str) -> str:
     """
@@ -532,37 +529,51 @@ async def analyze_cv(
             analysis = await analyze_resume(resume_text, job_descriptions)
             logger.info("Análise realizada com sucesso")
             
-            # Deduzir créditos em uma transação separada
-            try:
+            # Verificar se a análise retornou resultados válidos
+            if (
+                isinstance(analysis, dict) and
+                'error' not in analysis and
+                'extracted_keywords' in analysis and
+                'keywords' in analysis and
+                len(analysis.get('extracted_keywords', {}).get('all_keywords', [])) > 0
+            ):
+                # Só deduz créditos se a análise foi bem-sucedida e retornou palavras-chave
                 user_credits.remaining_analyses -= 1
-                db.commit()
-                logger.info(f"Créditos deduzidos com sucesso. Novo saldo: {user_credits.remaining_analyses}")
-            except Exception as e:
+                try:
+                    db.commit()
+                    logger.info(f"Crédito deduzido com sucesso. Restantes: {user_credits.remaining_analyses}")
+                except Exception as e:
+                    logger.error(f"Erro ao deduzir crédito: {str(e)}")
+                    db.rollback()
+                    raise HTTPException(
+                        status_code=500,
+                        detail="Erro ao processar créditos"
+                    )
+                
+                return analysis
+            else:
+                logger.error("Análise retornou resultado vazio ou inválido")
                 db.rollback()
-                logger.error(f"Erro ao deduzir créditos: {str(e)}")
                 raise HTTPException(
                     status_code=500,
-                    detail="Erro ao processar créditos"
+                    detail="A análise não retornou resultados válidos. Nenhum crédito foi consumido."
                 )
-            
-            validated_analysis = validate_analysis_results(analysis, resume_text)
-            return validated_analysis
 
         except Exception as e:
+            logger.error(f"Erro durante o processo de análise: {str(e)}")
             db.rollback()
-            logger.error(f"Erro durante análise: {str(e)}")
             raise HTTPException(
                 status_code=500,
-                detail=str(e)
+                detail=f"Erro durante a análise: {str(e)}"
             )
 
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Erro inesperado: {str(e)}")
+        logger.error(f"Erro geral: {str(e)}")
         raise HTTPException(
             status_code=500,
-            detail="Erro interno do servidor"
+            detail=f"Erro interno do servidor: {str(e)}"
         )
 
 @router.post("/test-analysis")
