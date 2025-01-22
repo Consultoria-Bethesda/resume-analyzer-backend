@@ -1,7 +1,6 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from app.routes import auth, payment, analysis
-import logging
+from app.routes import auth_router, payment_router, analysis_router
 
 app = FastAPI()
 
@@ -18,9 +17,9 @@ app.add_middleware(
 )
 
 # Incluir rotas
-app.include_router(auth.router, prefix="/auth", tags=["auth"])
-app.include_router(payment.router, prefix="/payment", tags=["payment"])
-app.include_router(analysis.router, prefix="/analysis", tags=["analysis"])
+app.include_router(auth_router, prefix="/auth", tags=["auth"])
+app.include_router(payment_router, prefix="/payment", tags=["payment"])
+app.include_router(analysis_router, prefix="/analysis", tags=["analysis"])
 
 @app.get("/")
 async def root():
