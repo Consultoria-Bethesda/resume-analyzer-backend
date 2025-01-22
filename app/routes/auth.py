@@ -14,6 +14,7 @@ import smtplib
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from datetime import datetime, timedelta
+from typing import Optional
 
 logger = logging.getLogger(__name__)
 router = APIRouter()  # Adicionando a definição do router
@@ -21,7 +22,7 @@ router = APIRouter()  # Adicionando a definição do router
 class UserCreate(BaseModel):
     email: str
     password: str
-    name: str | None = None
+    name: Optional[str] = None
 
 class LoginData(BaseModel):
     email: str

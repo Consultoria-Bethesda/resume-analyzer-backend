@@ -20,8 +20,6 @@ class SecurityMiddleware:
         try:
             # Validação do Content-Type para requisições multipart
             await self.validate_multipart(request)
-            
-            # Continua com o processamento normal da requisição
             return await self.app(scope, receive, send)
             
         except HTTPException as e:
@@ -56,8 +54,8 @@ class SecurityMiddleware:
                         status_code=400,
                         detail="Invalid multipart boundary"
                     )
-            except IndexError:
+            except Exception:
                 raise HTTPException(
                     status_code=400,
-                    detail="Invalid multipart format"
+                    detail="Invalid Content-Type format"
                 )
