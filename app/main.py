@@ -1,6 +1,7 @@
 from fastapi import FastAPI
+from app.middleware.security import SecurityMiddleware
+from app.routes import cv_analysis, auth, user, payment
 from fastapi.middleware.cors import CORSMiddleware
-from app.routes import auth, cv_analysis, payment
 from app.database import engine, Base
 from app.config.settings import settings
 from app.middleware.session import SessionMiddleware

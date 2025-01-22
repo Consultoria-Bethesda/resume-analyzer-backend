@@ -5,7 +5,7 @@ uvicorn==0.24.0
 # Arquivo handling
 pypdf>=3.17.1  # Substituindo PyPDF2
 python-docx==1.0.1
-python-multipart==0.0.20  # Mantido, mas com mitigações no código
+python-multipart==0.0.20  # Com mitigações via middleware
 
 # ... resto das dependências ...
 python-jose==3.3.0
