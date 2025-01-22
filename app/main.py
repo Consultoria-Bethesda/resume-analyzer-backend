@@ -12,8 +12,9 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=[settings.FRONTEND_URL],
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    allow_headers=["Content-Type", "Authorization", "Accept"],
+    expose_headers=["Content-Type"]
 )
 
 # Healthcheck endpoint
