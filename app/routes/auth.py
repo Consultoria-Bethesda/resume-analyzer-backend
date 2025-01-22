@@ -39,13 +39,17 @@ async def login_google():
         
         logger.info(f"URL do Google gerada: {full_url[:50]}...")
         
-        return JSONResponse(
+        response = JSONResponse(
             content={"url": full_url},
             headers={
                 "Access-Control-Allow-Origin": settings.FRONTEND_URL,
                 "Access-Control-Allow-Credentials": "true",
+                "Content-Type": "application/json"
             }
         )
+        
+        logger.info("Retornando resposta com URL do Google")
+        return response
         
     except Exception as e:
         logger.error(f"Erro ao gerar URL do Google: {str(e)}")
