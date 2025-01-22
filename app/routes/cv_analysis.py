@@ -11,7 +11,7 @@ from openai import OpenAI
 from app.config.settings import settings
 import aiohttp
 from bs4 import BeautifulSoup
-import PyPDF2
+from pypdf import PdfReader  # Mudado de PyPDF2 para pypdf
 import docx
 import io
 from app.utils.keywords_filter import filter_relevant_keywords
@@ -22,25 +22,47 @@ router = APIRouter()
 # Inicialize o cliente OpenAI
 client = OpenAI(api_key=settings.OPENAI_API_KEY)
 
+async def validate_content_type(content_type: str) -> bool:
+    """Validação básica do Content-Type para mitigar ReDoS"""
+    if not content_type:
+        return False
+    valid_types = ['multipart/form-data', 'application/pdf', 'application/msword', 
+                  'application/vnd.openxmlformats-officedocument.wordprocessingml.document']
+    return any(valid_type in content_type.lower() for valid_type in valid_types)
+
 async def read_resume(file: UploadFile) -> str:
-    content = await file.read()
+    # Validação do Content-Type
+    if not await validate_content_type(file.content_type):
+        raise HTTPException(status_code=400, detail="Content-Type inválido")
     
-    if file.filename.endswith('.pdf'):
-        pdf_reader = PyPDF2.PdfReader(io.BytesIO(content))
-        text = ""
-        for page in pdf_reader.pages:
-            text += page.extract_text()
-        return text
+    # Limite de tamanho do arquivo (ex: 10MB)
+    MAX_FILE_SIZE = 10 * 1024 * 1024  # 10MB em bytes
+    content = await file.read(MAX_FILE_SIZE + 1)
     
-    elif file.filename.endswith(('.doc', '.docx')):
-        doc = docx.Document(io.BytesIO(content))
-        text = ""
-        for paragraph in doc.paragraphs:
-            text += paragraph.text + "\n"
-        return text
+    if len(content) > MAX_FILE_SIZE:
+        raise HTTPException(status_code=400, detail="Arquivo muito grande")
     
-    else:
-        raise HTTPException(status_code=400, detail="Formato de arquivo não suportado")
+    try:
+        if file.filename.endswith('.pdf'):
+            pdf_reader = PdfReader(io.BytesIO(content))
+            text = ""
+            for page in pdf_reader.pages:
+                text += page.extract_text()
+            return text
+        
+        elif file.filename.endswith(('.doc', '.docx')):
+            doc = docx.Document(io.BytesIO(content))
+            text = ""
+            for paragraph in doc.paragraphs:
+                text += paragraph.text + "\n"
+            return text
+        
+        else:
+            raise HTTPException(status_code=400, detail="Formato de arquivo não suportado")
+            
+    except Exception as e:
+        logger.error(f"Erro ao processar arquivo: {str(e)}")
+        raise HTTPException(status_code=400, detail="Erro ao processar arquivo")
 
 async def fetch_job_descriptions(urls: List[str]) -> List[str]:
     descriptions = []
