@@ -1,3 +1,4 @@
+# Conteúdo atual do cv_analysis.py
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form
 from sqlalchemy.orm import Session
 from typing import List
