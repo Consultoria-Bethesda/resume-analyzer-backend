@@ -1,5 +1,4 @@
-import os
-import sys
+
 from logging.config import fileConfig
 
 from sqlalchemy import engine_from_config
@@ -7,11 +6,12 @@ from sqlalchemy import pool
 
 from alembic import context
 
-# Adicionar o diretório raiz do projeto ao PYTHONPATH
-sys.path.append(os.path.dirname(os.path.dirname(__file__)))
+import os
+import sys
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from app.config.settings import settings
-from app.models.user import Base
+from app.database import Base
+from app.models import *
 
 config = context.config
 
@@ -20,11 +20,8 @@ if config.config_file_name is not None:
 
 target_metadata = Base.metadata
 
-def get_url():
-    return f"postgresql://{settings.DB_USER}:{settings.DB_PASSWORD}@{settings.DB_HOST}:{settings.DB_PORT}/{settings.DB_NAME}"
-
 def run_migrations_offline() -> None:
-    url = get_url()
+    url = config.get_main_option("sqlalchemy.url")
     context.configure(
         url=url,
         target_metadata=target_metadata,
@@ -36,17 +33,16 @@ def run_migrations_offline() -> None:
         context.run_migrations()
 
 def run_migrations_online() -> None:
-    configuration = config.get_section(config.config_ini_section)
-    configuration["sqlalchemy.url"] = get_url()
     connectable = engine_from_config(
-        configuration,
+        config.get_section(config.config_ini_section, {}),
         prefix="sqlalchemy.",
         poolclass=pool.NullPool,
     )
 
     with connectable.connect() as connection:
         context.configure(
-            connection=connection, target_metadata=target_metadata
+            connection=connection,
+            target_metadata=target_metadata
         )
 
         with context.begin_transaction():

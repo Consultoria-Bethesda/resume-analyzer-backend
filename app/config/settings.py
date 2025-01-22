@@ -17,7 +17,13 @@ class Settings(BaseSettings):
     STRIPE_SECRET_KEY: str
     STRIPE_PUBLIC_KEY: str
     STRIPE_WEBHOOK_SECRET: str
+    STRIPE_PRICE_ID: str
     SECRET_KEY: str
+    SMTP_HOST: str = "smtp.gmail.com"
+    SMTP_PORT: int = 587
+    SMTP_USER: str = ""
+    SMTP_PASSWORD: str = ""
+    ENVIRONMENT: str = "development"  # Valor padrão é development
 
     class Config:
         env_file = ".env"

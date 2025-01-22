@@ -17,13 +17,23 @@ def create_access_token(data: dict):
 
 def decode_token(token: str):
     try:
+        logger.info("Iniciando decodificação do token")
         payload = jwt.decode(token, settings.SECRET_KEY, algorithms=["HS256"])
+        logger.info(f"Payload decodificado: {payload}")
+        
         email: str = payload.get("sub")
         if email is None:
+            logger.error("Email não encontrado no payload do token")
             return None
+            
+        logger.info(f"Email extraído do token: {email}")
         return email
+        
     except JWTError as e:
-        logger.error(f"Erro ao decodificar token: {str(e)}")
+        logger.error(f"Erro ao decodificar token JWT: {str(e)}")
+        return None
+    except Exception as e:
+        logger.error(f"Erro inesperado ao decodificar token: {str(e)}")
         return None
 
 def verify_password(plain_password: str, hashed_password: str):

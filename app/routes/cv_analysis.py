@@ -102,15 +102,38 @@ async def fetch_job_descriptions(urls: List[str]) -> List[str]:
 async def analyze_resume(resume_text: str, job_descriptions: List[str]) -> dict:
     try:
         prompt = f"""
-Analise o currículo fornecido em comparação com as descrições das vagas e forneça uma análise detalhada no formato JSON abaixo.
-Seja específico e detalhado em cada seção.
+Analise o currículo e as descrições das vagas seguindo EXATAMENTE estas regras:
 
-IMPORTANTE:
-- Identifique o nome e cargo atual do candidato
-- Extraia TODAS as palavras-chave das vagas, considerando a descrição da vaga obtida em requisitos, requerimentos, qualificações, responsabilidades e atribuições, e IGNORAR palavras-chave presentes em informações adicionais ou benefícios
-- Compare as palavras-chave com o currículo exiba corretamente no item que identifica quais palavras estão presentes, NÃO mostre junto com as palavras-chave identificadas nas vagas enviadas.
-- Forneça recomendações específicas e acionáveis
-- Mantenha os termos exatamente como aparecem
+REGRAS DE EXTRAÇÃO DE PALAVRAS-CHAVE:
+1. Extraia APENAS palavras-chave técnicas e profissionais relevantes das vagas, incluindo:
+   - Requisitos técnicos e comportamentais
+   - Ferramentas e tecnologias
+   - Metodologias e frameworks
+   - Responsabilidades e atribuições principais
+   - Conhecimentos específicos do domínio
+   - Certificações e qualificações relevantes
+   - Habilidades técnicas e soft skills
+   - Experiências específicas requeridas
+
+2. NÃO inclua como palavras-chave:
+   - Benefícios e remuneração
+   - Modalidade de trabalho (remoto, híbrido, etc)
+   - Localização e horário
+   - Informações sobre contratação
+   - Outros benefícios e facilidades
+
+3. Regras de formatação:
+   - REMOVA DUPLICATAS, mantendo a primeira ocorrência
+   - Mantenha a forma mais completa dos termos
+   - Preserve termos compostos quando relevantes
+   - Mantenha acrônimos apenas quando são a forma principal de uso
+
+4. Foque em extrair:
+   - Competências técnicas específicas
+   - Habilidades profissionais requeridas
+   - Conhecimentos de domínio necessários
+   - Responsabilidades principais da função
+   - Experiências relevantes solicitadas
 
 Retorne APENAS o JSON abaixo preenchido:
 
@@ -118,15 +141,15 @@ Retorne APENAS o JSON abaixo preenchido:
 "introduction": "Análise detalhada do currículo de [NOME] para as vagas de [CARGO]. [Breve resumo do perfil e adequação]",
 "extracted_keywords": {{
 "all_keywords": [
-"Lista completa de TODAS as palavras-chave e termos relevantes encontrados nas descrições das vagas (mantenha EXATAMENTE como aparecem)"
+"Lista COMPLETA de palavras-chave ÚNICAS encontradas nas vagas (sem duplicatas, mantendo a grafia original da primeira ocorrência)"
 ]
 }},
 "keywords": {{
 "present": [
-"[termo exato] - Em: [seção específica do currículo onde foi encontrado]"
+"[termo exato único]"
 ],
 "missing": [
-"[termo exato] - Add em: [seção sugerida para adicionar]"
+"[termo exato único]"
 ]
 }},
 "recommendations": [
@@ -204,6 +227,255 @@ DESCRIÇÕES DAS VAGAS:
             "conclusion": "Não foi possível concluir a análise."
         }
 
+def normalize_text_for_comparison(text: str) -> str:
+    """
+    Normaliza o texto para comparação case-insensitive e remove espaços extras
+    """
+    # Remove caracteres especiais mantendo espaços
+    import re
+    text = re.sub(r'[^\w\s]', ' ', text.lower())
+    # Remove espaços extras
+    return ' '.join(text.split())
+
+def identify_resume_section(text: str, line_index: int) -> str:
+    """
+    Identifica a seção do currículo baseado no contexto
+    """
+    sections = {
+        "resumo": ["resumo", "sobre mim", "perfil", "objetivo", "apresentação"],
+        "experiência": ["experiência", "experiencias", "profissional", "trabalho", "carreira"],
+        "formação": ["formação", "educação", "acadêmico", "escolaridade"],
+        "habilidades": ["habilidades", "competências", "conhecimentos", "tecnologias", "skills"],
+        "certificações": ["certificações", "certificados", "cursos", "qualificações"],
+        "idiomas": ["idiomas", "línguas"],
+        "projetos": ["projetos", "portfolio", "realizações"]
+    }
+    
+    lines = text.split('\n')
+    # Procura até 10 linhas acima para encontrar o cabeçalho da seção
+    start_index = max(0, line_index)
+    end_index = max(-1, line_index - 11)
+    
+    for i in range(start_index, end_index, -1):
+        line_lower = lines[i].lower().strip()
+        for section_name, keywords in sections.items():
+            if any(keyword in line_lower for keyword in keywords):
+                return section_name.title()
+    
+    # Se não encontrar seção específica, procura em todo o texto
+    text_lower = text.lower()
+    for section_name, keywords in sections.items():
+        if any(keyword in text_lower for keyword in keywords):
+            return section_name.title()
+    
+    return "Experiência"  # Default para experiência em vez de "Outros"
+
+def validate_keyword_match(keyword: str, text: str) -> tuple[bool, str]:
+    """
+    Valida se há uma correspondência exata da palavra-chave no texto e retorna a seção
+    """
+    normalized_keyword = normalize_text_for_comparison(keyword)
+    lines = text.split('\n')
+    
+    # Padrão para encontrar a palavra exata, considerando limites de palavra
+    import re
+    keyword_pattern = r'\b' + re.escape(normalized_keyword) + r'\b'
+    
+    for i, line in enumerate(lines):
+        normalized_line = normalize_text_for_comparison(line)
+        match = re.search(keyword_pattern, normalized_line)
+        if match:
+            # Verifica o contexto da linha para garantir que é uma correspondência válida
+            words_in_line = normalized_line.split()
+            keyword_words = normalized_keyword.split()
+            
+            # Verifica se todas as palavras da keyword estão presentes na linha na mesma ordem
+            for j in range(len(words_in_line) - len(keyword_words) + 1):
+                if words_in_line[j:j+len(keyword_words)] == keyword_words:
+                    section = identify_resume_section(text, i)
+                    return True, section
+    
+    return False, ""
+
+def validate_analysis_results(analysis_result: dict, resume_text: str) -> dict:
+    """
+    Valida e corrige os resultados da análise
+    """
+    validated_present = []
+    
+    # Garantir que all_keywords contenha APENAS palavras-chave das vagas
+    all_keywords = set(analysis_result['extracted_keywords']['all_keywords'])
+    
+    # Para cada palavra-chave das vagas, procurar no currículo
+    for keyword in all_keywords:
+        found, _ = validate_keyword_match(keyword, resume_text)
+        if found:
+            # Adiciona apenas a palavra-chave, sem indicação de seção
+            validated_present.append(keyword)
+    
+    # Atualizar as palavras-chave presentes
+    analysis_result['keywords']['present'] = validated_present
+    
+    # Atualizar as palavras-chave faltantes
+    present_keywords = set(validated_present)
+    missing_keywords = all_keywords - present_keywords
+    
+    # Adiciona apenas as palavras-chave faltantes, sem sugestão de seção
+    analysis_result['keywords']['missing'] = list(missing_keywords)
+    
+    # Garantir que extracted_keywords.all_keywords mantenha TODAS as palavras-chave das vagas
+    analysis_result['extracted_keywords']['all_keywords'] = list(all_keywords)
+    
+    return analysis_result
+
+def suggest_section(keyword: str) -> str:
+    """
+    Sugere a seção mais apropriada para adicionar cada tipo de palavra-chave
+    """
+    keyword_lower = keyword.lower()
+    
+    # Mapeamento de palavras-chave para seções sugeridas
+    section_mapping = {
+        'technical': ['sql', 'python', 'java', 'docker', 'aws', 'azure', 'git'],
+        'methodologies': ['scrum', 'kanban', 'agile', 'lean', 'xp'],
+        'tools': ['jira', 'confluence', 'trello', 'miro', 'figma'],
+        'business': ['product owner', 'stakeholder', 'backlog', 'kpi', 'roi'],
+        'certifications': ['pmp', 'psm', 'safe', 'cspo'],
+    }
+    
+    for section, keywords in section_mapping.items():
+        if any(k in keyword_lower for k in keywords):
+            if section == 'technical':
+                return "Habilidades Técnicas"
+            elif section == 'methodologies':
+                return "Metodologias"
+            elif section == 'tools':
+                return "Ferramentas"
+            elif section == 'business':
+                return "Experiência Profissional"
+            elif section == 'certifications':
+                return "Certificações"
+    
+    return "Experiência Profissional"
+
+def remove_duplicate_keywords(analysis_result: dict) -> dict:
+    """
+    Remove palavras-chave duplicadas mantendo a primeira ocorrência
+    """
+    def normalize_for_dedup(keyword: str) -> str:
+        """Normaliza keyword para comparação de duplicatas"""
+        # Remove caracteres especiais e converte para minúsculas
+        text = re.sub(r'[^\w\s]', '', keyword.lower()).strip()
+        
+        # Lista reduzida de palavras a serem ignoradas quando sozinhas
+        # Mantém termos técnicos e de negócio mesmo quando sozinhos
+        ignore_single_words = {
+            'framework', 'ferramenta', 'plataforma',
+            'sistema', 'ambiente', 'módulo',
+            'conhecimento', 'experiência'
+        }
+        
+        # Se a keyword for uma única palavra e estiver na lista de ignoradas, retorna vazio
+        if text in ignore_single_words:
+            return ''
+            
+        # Lista expandida de termos compostos que devem ser mantidos intactos
+        compound_terms = {
+            # Termos de Produto e Negócio
+            'product owner', 'product manager', 'product backlog', 'product vision',
+            'visão do produto', 'qualidade do produto', 'jornada de usuários',
+            'histórias de usuário', 'critérios de aceitação', 'indicadores de performance',
+            'times ágeis', 'desenvolvimento ágil', 'metodologia ágil',
+            
+            # Termos Técnicos e Ferramentas
+            'banco de dados', 'base de dados', 'sistema operacional',
+            'desenvolvimento web', 'desenvolvimento mobile', 'desenvolvimento frontend',
+            'desenvolvimento backend', 'desenvolvimento fullstack',
+            'programação orientada a objetos', 'arquitetura de software',
+            'arquitetura de sistemas', 'infraestrutura de ti',
+            'infraestrutura cloud', 'serviços web', 'web services',
+            'interface de usuário', 'experiência do usuário',
+            
+            # Termos de Gestão e Processos
+            'gestão de projetos', 'gerenciamento de projetos',
+            'gestão de produtos', 'gestão de equipes', 'liderança técnica',
+            'metodologia scrum', 'framework scrum', 'método ágil',
+            'processo ágil', 'rituais ágeis',
+            
+            # Termos de Negócio Específicos
+            'sub adquirência', 'gateway de pagamento', 'anti fraude',
+            'processamento de pagamentos', 'meios de pagamento',
+            'indicadores de performance', 'kpis de negócio',
+            'análise de dados', 'business intelligence'
+        }
+        
+        # Termos técnicos e siglas que devem ser mantidos mesmo quando sozinhos
+        technical_terms = {
+            'sql', 'kpi', 'pmo', 'pos', 'cro', 'api', 'app', 'apps',
+            'jira', 'trello', 'miro', 'figma', 'techfin', 'fintech',
+            'backlog', 'scrum', 'kanban', 'devops', 'agile',
+            'gateway', 'gateways', 'antifraude'
+        }
+        
+        # Se é um termo técnico sozinho, retorna ele mesmo
+        if text in technical_terms:
+            return text
+            
+        # Se o texto normalizado for um termo composto conhecido, retorna ele mesmo
+        text_normalized = ' '.join(text.split())  # normaliza espaços
+        if text_normalized in compound_terms:
+            return text_normalized
+            
+        # Remove palavras ignoradas do início do termo
+        words = text_normalized.split()
+        if words and words[0] in ignore_single_words:
+            words = words[1:]
+        
+        result = ' '.join(words)
+        
+        # Se após normalização ficar vazio, retorna o texto original normalizado
+        return result if result else text_normalized
+    
+    # Processar all_keywords mantendo a versão mais completa
+    keyword_groups = {}
+    for keyword in analysis_result['extracted_keywords']['all_keywords']:
+        norm_key = normalize_for_dedup(keyword)
+        if norm_key:
+            if norm_key not in keyword_groups or len(keyword) > len(keyword_groups[norm_key]):
+                keyword_groups[norm_key] = keyword
+    
+    analysis_result['extracted_keywords']['all_keywords'] = list(keyword_groups.values())
+    
+    # Processar keywords present
+    present_groups = {}
+    for entry in analysis_result['keywords']['present']:
+        keyword = entry.split(" - Em:")[0].strip()
+        section = entry.split(" - Em:")[1].strip()
+        norm_key = normalize_for_dedup(keyword)
+        if norm_key:
+            if norm_key not in present_groups or len(keyword) > len(present_groups[norm_key][0]):
+                present_groups[norm_key] = (keyword, section)
+    
+    analysis_result['keywords']['present'] = [
+        f"{keyword} - Em: {section}" for keyword, section in present_groups.values()
+    ]
+    
+    # Processar keywords missing
+    missing_groups = {}
+    for entry in analysis_result['keywords']['missing']:
+        keyword = entry.split(" - Add em:")[0].strip()
+        section = entry.split(" - Add em:")[1].strip()
+        norm_key = normalize_for_dedup(keyword)
+        if norm_key and norm_key not in present_groups:
+            if norm_key not in missing_groups or len(keyword) > len(missing_groups[norm_key][0]):
+                missing_groups[norm_key] = (keyword, section)
+    
+    analysis_result['keywords']['missing'] = [
+        f"{keyword} - Add em: {section}" for keyword, section in missing_groups.values()
+    ]
+    
+    return analysis_result
+
 @router.post("/analyze")
 async def analyze_cv(
     file: UploadFile = File(...),
@@ -212,11 +484,17 @@ async def analyze_cv(
     db: Session = Depends(get_db)
 ):
     try:
+        logger.info(f"Iniciando análise para usuário: {current_user.email}")
+        
+        # Verificar créditos com lock para evitar condições de corrida
         user_credits = db.query(UserCredits).filter(
             UserCredits.user_id == current_user.id
-        ).first()
+        ).with_for_update().first()
+
+        logger.info(f"Créditos antes da análise: {user_credits.remaining_analyses if user_credits else 0}")
 
         if not user_credits or user_credits.remaining_analyses < 1:
+            logger.warning(f"Créditos insuficientes para usuário: {current_user.email}")
             raise HTTPException(
                 status_code=402,
                 detail="Créditos insuficientes. Por favor, adquira mais créditos."
@@ -254,25 +532,47 @@ async def analyze_cv(
             analysis = await analyze_resume(resume_text, job_descriptions)
             logger.info("Análise realizada com sucesso")
             
-            user_credits.remaining_analyses -= 1
-            db.commit()
-            logger.info(f"Créditos deduzidos com sucesso para usuário {current_user.email}")
+            # Deduzir créditos em uma transação separada
+            try:
+                user_credits.remaining_analyses -= 1
+                db.commit()
+                logger.info(f"Créditos deduzidos com sucesso. Novo saldo: {user_credits.remaining_analyses}")
+            except Exception as e:
+                db.rollback()
+                logger.error(f"Erro ao deduzir créditos: {str(e)}")
+                raise HTTPException(
+                    status_code=500,
+                    detail="Erro ao processar créditos"
+                )
             
-            return analysis
+            validated_analysis = validate_analysis_results(analysis, resume_text)
+            return validated_analysis
 
         except Exception as e:
-            logger.error(f"Erro durante o processo de análise: {str(e)}")
             db.rollback()
+            logger.error(f"Erro durante análise: {str(e)}")
             raise HTTPException(
-                status_code=400,
+                status_code=500,
                 detail=str(e)
             )
 
-    except HTTPException as e:
-        raise e
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Erro inesperado: {str(e)}")
         raise HTTPException(
             status_code=500,
-            detail="Erro inesperado. Por favor, tente novamente mais tarde."
+            detail="Erro interno do servidor"
         )
+
+@router.post("/test-analysis")
+async def test_cv_analysis():
+    test_results = []
+    for resume, job in test_cases():
+        result = await analyze_cv(resume, [job])
+        test_results.append({
+            "resume": resume,
+            "job": job,
+            "analysis": result
+        })
+    return test_results
