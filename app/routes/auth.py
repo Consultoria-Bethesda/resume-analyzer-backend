@@ -15,7 +15,7 @@ import smtplib
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from datetime import datetime, timedelta
-from typing import Optional
+from typing import Optional, Dict, Any
 
 logger = logging.getLogger(__name__)
 router = APIRouter()  # Adicionando a definição do router
@@ -29,41 +29,57 @@ class LoginData(BaseModel):
     email: str
     password: str
 
-@router.get("/google/login")
-async def login_google():
+@router.get("/google/login", response_class=JSONResponse)
+async def login_google() -> Dict[str, Any]:
     try:
         logger.info("Iniciando processo de login com Google")
+        
+        # Verificar configurações
+        if not settings.GOOGLE_CLIENT_ID:
+            logger.error("GOOGLE_CLIENT_ID não configurado")
+            return JSONResponse(
+                status_code=500,
+                content={"detail": "Configuração do Google OAuth não encontrada"}
+            )
+
         auth_url = "https://accounts.google.com/o/oauth2/v2/auth"
+        redirect_uri = f"{settings.BASE_URL}/auth/google/callback"
+        
+        # Log das configurações
+        logger.info(f"BASE_URL: {settings.BASE_URL}")
+        logger.info(f"Redirect URI: {redirect_uri}")
         
         params = {
             "response_type": "code",
             "client_id": settings.GOOGLE_CLIENT_ID,
-            "redirect_uri": f"{settings.BASE_URL}/auth/google/callback",
+            "redirect_uri": redirect_uri,
             "scope": "openid email profile",
             "access_type": "offline",
             "prompt": "consent"
         }
         
-        # Log das configurações (sem secrets)
-        logger.info(f"Configurações de auth: client_id={settings.GOOGLE_CLIENT_ID[:10]}..., redirect_uri={params['redirect_uri']}")
-        
-        # Construir URL com parâmetros
+        # Construir URL
         query_string = "&".join(f"{k}={v}" for k, v in params.items())
         full_url = f"{auth_url}?{query_string}"
         
-        logger.info(f"URL do Google gerada com sucesso: {full_url[:50]}...")
+        logger.info(f"URL do Google gerada: {full_url[:50]}...")
         
         return JSONResponse(
             status_code=200,
             content={"url": full_url},
-            headers={"Content-Type": "application/json"}
+            headers={
+                "Content-Type": "application/json",
+                "Access-Control-Allow-Origin": settings.FRONTEND_URL,
+                "Access-Control-Allow-Credentials": "true"
+            }
         )
+        
     except Exception as e:
         logger.error(f"Erro ao gerar URL do Google: {str(e)}")
-        logger.error(f"Stacktrace completo: {traceback.format_exc()}")
+        logger.error(f"Stacktrace: {traceback.format_exc()}")
         return JSONResponse(
             status_code=500,
-            content={"detail": f"Erro ao iniciar login com Google: {str(e)}"},
+            content={"detail": str(e)},
             headers={"Content-Type": "application/json"}
         )
 

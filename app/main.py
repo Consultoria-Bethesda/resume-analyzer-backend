@@ -7,7 +7,7 @@ from app.middleware.security import SecurityMiddleware
 
 app = FastAPI()
 
-# Configuração CORS
+# Configuração CORS mais específica
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[settings.FRONTEND_URL],
