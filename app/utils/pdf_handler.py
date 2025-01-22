@@ -19,9 +19,12 @@ def process_pdf(content: bytes, max_pages: int = 100) -> str:
                 detail="PDF file size exceeds maximum limit"
             )
 
+        # Timeout global para todo o processamento
+        start_time = time.time()
+        MAX_PROCESSING_TIME = 30  # 30 segundos total
+
         pdf_reader = PdfReader(io.BytesIO(content))
         
-        # Proteção contra PDFs muito grandes
         if len(pdf_reader.pages) > max_pages:
             raise HTTPException(
                 status_code=400,
@@ -30,35 +33,20 @@ def process_pdf(content: bytes, max_pages: int = 100) -> str:
         
         text = ""
         for page in pdf_reader.pages:
-            # Timeout para extração de texto por página
-            start_time = time.time()
+            # Verifica timeout global
+            if time.time() - start_time > MAX_PROCESSING_TIME:
+                logger.warning("PDF processing timeout reached")
+                break
+
             try:
                 page_text = page.extract_text()
-                
-                # Verifica timeout
-                if time.time() - start_time > 5:  # 5 segundos timeout por página
-                    logger.warning("Page processing timeout")
-                    continue
-                    
                 text += page_text
-                
             except Exception as e:
-                logger.error(f"Error extracting text from PDF page: {str(e)}")
+                logger.error(f"Error extracting text from page: {str(e)}")
                 continue
                 
-        if not text.strip():
-            raise HTTPException(
-                status_code=400,
-                detail="Could not extract text from PDF"
-            )
-                
-        return text
+        return text.strip()
         
-    except HTTPException:
-        raise
     except Exception as e:
         logger.error(f"Error processing PDF: {str(e)}")
-        raise HTTPException(
-            status_code=400, 
-            detail="Error processing PDF file"
-        )
+        raise HTTPException(status_code=400, detail="Error processing PDF file")

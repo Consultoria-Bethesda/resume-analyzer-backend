@@ -7,14 +7,13 @@ logger = logging.getLogger(__name__)
 
 class SecurityMiddleware:
     def __init__(self):
-        # Padrão seguro para boundary do multipart/form-data
+        # Padrão estrito para boundary do multipart/form-data
         self.boundary_pattern: Pattern = re.compile(r'^[a-zA-Z0-9\'()+_,-./:=? ]{1,70}$')
         self.max_content_type_length = 256
         
     async def validate_multipart(self, request: Request) -> None:
         content_type = request.headers.get('content-type', '')
         
-        # Validação básica do Content-Type
         if not content_type:
             return
             
@@ -22,44 +21,42 @@ class SecurityMiddleware:
         if len(content_type) > self.max_content_type_length:
             raise HTTPException(
                 status_code=400, 
-                detail="Content-Type header exceeds maximum length"
+                detail="Content-Type header too long"
             )
             
         # Validação específica para multipart/form-data
-        if 'multipart/form-data' in content_type:
+        if content_type.startswith('multipart/form-data'):
             try:
-                # Extrai e valida o boundary
+                # Validação rápida do formato básico
                 if 'boundary=' not in content_type:
                     raise HTTPException(
                         status_code=400,
                         detail="Missing boundary in multipart/form-data"
                     )
                 
-                boundary = content_type.split('boundary=')[-1].split(';')[0].strip()
+                # Extração segura do boundary
+                parts = content_type.split('boundary=', 1)
+                if len(parts) != 2:
+                    raise HTTPException(
+                        status_code=400,
+                        detail="Invalid boundary format"
+                    )
                 
-                # Valida o boundary contra o padrão seguro
+                boundary = parts[1].split(';')[0].strip()
+                
+                # Validação do boundary
                 if not self.boundary_pattern.match(boundary):
                     raise HTTPException(
                         status_code=400,
-                        detail="Invalid multipart/form-data boundary format"
+                        detail="Invalid boundary characters or length"
                     )
                     
             except HTTPException:
                 raise
             except Exception as e:
                 logger.error(f"Multipart validation error: {str(e)}")
-                raise HTTPException(
-                    status_code=400, 
-                    detail="Invalid multipart/form-data format"
-                )
+                raise HTTPException(status_code=400, detail="Invalid multipart format")
 
     async def __call__(self, request: Request, call_next):
-        try:
-            await self.validate_multipart(request)
-            response = await call_next(request)
-            return response
-        except HTTPException:
-            raise
-        except Exception as e:
-            logger.error(f"Security middleware error: {str(e)}")
-            raise HTTPException(status_code=400, detail="Invalid request format")
+        await self.validate_multipart(request)
+        return await call_next(request)
