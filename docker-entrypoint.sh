@@ -1,5 +1,8 @@
 #!/bin/bash
 
+# Adiciona o diretório atual ao PYTHONPATH
+export PYTHONPATH="${PYTHONPATH}:/app"
+
 # Esperar pelo banco de dados
 echo "Aguardando banco de dados..."
 sleep 5

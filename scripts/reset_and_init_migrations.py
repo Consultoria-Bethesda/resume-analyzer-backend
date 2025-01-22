@@ -3,6 +3,10 @@ import sys
 import shutil
 from alembic import command
 from alembic.config import Config
+
+# Adiciona o diretório raiz ao PYTHONPATH
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
 from app.config.settings import settings
 
 def reset_and_init_migrations():
@@ -10,9 +14,19 @@ def reset_and_init_migrations():
         print("Iniciando reset das migrações...")
         
         # Remove diretório de migrações existente
-        if os.path.exists('alembic/versions'):
-            shutil.rmtree('alembic/versions')
-        os.makedirs('alembic/versions', exist_ok=True)
+        versions_dir = 'alembic/versions'
+        if os.path.exists(versions_dir):
+            print(f"Removendo diretório: {versions_dir}")
+            shutil.rmtree(versions_dir)
+        os.makedirs(versions_dir, exist_ok=True)
+        
+        # Remove a tabela alembic_version se existir
+        from sqlalchemy import create_engine, text
+        database_url = f"postgresql://{settings.DB_USER}:{settings.DB_PASSWORD}@{settings.DB_HOST}:{settings.DB_PORT}/{settings.DB_NAME}"
+        engine = create_engine(database_url)
+        with engine.connect() as conn:
+            conn.execute(text("DROP TABLE IF EXISTS alembic_version"))
+            conn.commit()
         
         # Configura Alembic
         alembic_cfg = Config("alembic.ini")
@@ -30,5 +44,4 @@ def reset_and_init_migrations():
         raise
 
 if __name__ == "__main__":
-    sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
     reset_and_init_migrations()
