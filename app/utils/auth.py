@@ -18,6 +18,16 @@ def create_access_token(data: dict):
 def decode_token(token: str):
     try:
         logger.info("Iniciando decodificação do token")
+        logger.info(f"Token recebido (primeiros 20 caracteres): {token[:20]}...")
+        
+        if not token or not isinstance(token, str):
+            logger.error(f"Token inválido: {token}")
+            return None
+        
+        # Remover prefixo "Bearer " se presente
+        if token.startswith('Bearer '):
+            token = token.split(' ')[1]
+            
         payload = jwt.decode(token, settings.SECRET_KEY, algorithms=["HS256"])
         logger.info(f"Payload decodificado: {payload}")
         
@@ -29,7 +39,13 @@ def decode_token(token: str):
         logger.info(f"Email extraído do token: {email}")
         return email
         
-    except JWTError as e:
+    except jwt.JWSError as e:
+        logger.error(f"Erro de assinatura JWT: {str(e)}")
+        return None
+    except jwt.ExpiredSignatureError as e:
+        logger.error(f"Token JWT expirado: {str(e)}")
+        return None
+    except jwt.JWTError as e:
         logger.error(f"Erro ao decodificar token JWT: {str(e)}")
         return None
     except Exception as e:

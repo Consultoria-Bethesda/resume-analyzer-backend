@@ -2,6 +2,7 @@
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form
 from sqlalchemy.orm import Session
 from typing import List
+import asyncio  # Adicionando import do asyncio
 from app.database import get_db
 from app.models.user import User
 from app.models.user_credits import UserCredits
@@ -16,6 +17,8 @@ from pypdf import PdfReader  # Mudado de PyPDF2 para pypdf
 import docx
 import io
 from app.utils.keywords_filter import filter_relevant_keywords
+from sklearn.metrics.pairwise import cosine_similarity
+import numpy as np
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -24,12 +27,26 @@ router = APIRouter()
 client = OpenAI(api_key=settings.OPENAI_API_KEY)
 
 async def validate_content_type(content_type: str) -> bool:
-    """Validação básica do Content-Type para mitigar ReDoS"""
+    """Validação aprimorada do Content-Type"""
     if not content_type:
         return False
-    valid_types = ['multipart/form-data', 'application/pdf', 'application/msword', 
-                  'application/vnd.openxmlformats-officedocument.wordprocessingml.document']
-    return any(valid_type in content_type.lower() for valid_type in valid_types)
+    valid_types = {
+        'application/pdf': ['.pdf'],
+        'application/msword': ['.doc'],
+        'application/vnd.openxmlformats-officedocument.wordprocessingml.document': ['.docx']
+    }
+    return any(content_type.lower() == mime_type for mime_type in valid_types.keys())
+
+async def validate_file_content(file: UploadFile) -> bool:
+    """Nova função para validação do conteúdo do arquivo"""
+    magic_numbers = {
+        b'%PDF': '.pdf',
+        b'\xD0\xCF\x11\xE0': '.doc',
+        b'PK\x03\x04': '.docx'
+    }
+    header = await file.read(4)
+    await file.seek(0)
+    return any(header.startswith(magic) for magic in magic_numbers.keys())
 
 async def read_resume(file: UploadFile) -> str:
     # Validação do Content-Type
@@ -68,103 +85,83 @@ async def read_resume(file: UploadFile) -> str:
 async def fetch_job_descriptions(urls: List[str]) -> List[str]:
     descriptions = []
     async with aiohttp.ClientSession() as session:
-        for url in urls:
-            if url and url.strip():
-                try:
-                    clean_url = url.strip()
-                    if not clean_url.startswith(('http://', 'https://')):
-                        clean_url = 'https://' + clean_url
-                    
-                    headers = {
-                        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
-                        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
-                        'Accept-Language': 'pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7',
-                        'Accept-Encoding': 'gzip, deflate, br',
-                        'Connection': 'keep-alive',
-                        'Upgrade-Insecure-Requests': '1'
-                    }
-                    
-                    async with session.get(clean_url, headers=headers, allow_redirects=True) as response:
-                        if response.status == 200:
-                            html = await response.text()
-                            soup = BeautifulSoup(html, 'html.parser')
-                            
-                            for tag in soup(['script', 'style', 'header', 'footer', 'nav']):
-                                tag.decompose()
-                            
-                            if 'gupy.io' in clean_url:
-                                job_description = soup.find('div', {'data-testid': 'job-description'})
-                                if job_description:
-                                    text = job_description.get_text(separator=' ', strip=True)
-                                else:
-                                    text = soup.find('main').get_text(separator=' ', strip=True) if soup.find('main') else ''
-                            else:
-                                text = soup.get_text(separator=' ', strip=True)
-                            
-                            text = ' '.join(text.split())
-                            if text:
-                                descriptions.append(text)
-                            else:
-                                logger.error(f"Texto vazio para URL: {clean_url}")
-                                descriptions.append("")
-                        else:
-                            logger.error(f"Erro ao acessar URL {clean_url}: Status {response.status}")
-                            descriptions.append("")
-                except Exception as e:
-                    logger.error(f"Erro ao buscar descrição da vaga: {str(e)}")
-                    descriptions.append("")
+        tasks = [fetch_single_job(session, url) for url in urls if url.strip()]
+        descriptions = await asyncio.gather(*tasks, return_exceptions=True)
+    return [desc for desc in descriptions if isinstance(desc, str) and desc.strip()]
+
+async def fetch_single_job(session: aiohttp.ClientSession, url: str) -> str:
+    job_site_parsers = {
+        'gupy.io': parse_gupy_job,
+        'linkedin.com': parse_linkedin_job,
+        'indeed.com': parse_indeed_job,
+        # Adicionar mais sites conforme necessário
+    }
     
-    valid_descriptions = [desc for desc in descriptions if desc.strip()]
-    if not valid_descriptions:
-        raise HTTPException(
-            status_code=400,
-            detail="Não foi possível obter a descrição das vagas. Por favor, verifique se os links são válidos e acessíveis."
+    try:
+        domain = extract_domain(url)
+        parser = job_site_parsers.get(domain, parse_generic_job)
+        return await parser(session, url)
+    except Exception as e:
+        logger.error(f"Erro ao buscar vaga {url}: {str(e)}")
+        return ""
+
+async def get_embedding(text: str, model="text-embedding-3-small") -> list:
+    """Gera embedding para um texto usando a API da OpenAI"""
+    try:
+        response = client.embeddings.create(
+            input=text,
+            model=model
         )
-    
-    return descriptions
+        return response.data[0].embedding
+    except Exception as e:
+        logger.error(f"Erro ao gerar embedding: {str(e)}")
+        raise
 
 async def analyze_resume(resume_text: str, job_descriptions: List[str]) -> dict:
     try:
-        prompt = f"""
-Analise o currículo e as descrições das vagas seguindo EXATAMENTE estas regras:
+        # Gerar embeddings para o currículo e descrições das vagas
+        resume_embedding = await get_embedding(resume_text)
+        job_embeddings = [await get_embedding(desc) for desc in job_descriptions]
+        
+        # Calcular similaridade média com todas as descrições de vagas
+        similarities = [
+            cosine_similarity([resume_embedding], [job_emb])[0][0]
+            for job_emb in job_embeddings
+        ]
+        avg_similarity = sum(similarities) / len(similarities)
 
-REGRAS DE EXTRAÇÃO DE PALAVRAS-CHAVE:
-1. Extraia TODAS as palavras-chave relevantes das vagas, considerando:
+        prompt = """Você é um especialista em análise de currículos para sistemas ATS (Applicant Tracking Systems). Siga estas etapas rigorosamente:
 
-OBRIGATORIAMENTE INCLUIR:
-- Cargos e funções específicas mencionadas
-- Tecnologias, ferramentas e sistemas
-- Metodologias e frameworks de trabalho
-- Certificações e qualificações técnicas
-- Conhecimentos específicos do setor/indústria
-- Responsabilidades e atribuições chave
-- Competências técnicas específicas
-- Processos e práticas de trabalho relevantes
-- Termos técnicos do setor
-- Habilidades específicas requeridas
-- Experiências profissionais relevantes
-- Conhecimentos de negócio específicos
-- Áreas de especialização
+1. **Análise da Descrição da Vaga**:
+   - Extraia termos-chave da descrição da vaga usando técnicas avançadas de NLP (lematização, reconhecimento de entidades nomeadas e análise de contexto).
+   - Foque em:
+     * Competências técnicas (ex: "Python", "AWS", "Scrum")
+     * Atividades/responsabilidades (ex: "desenvolvimento de APIs", "gestão de equipe ágil")
+     * Requisitos obrigatórios (ex: "graduação em Engenharia", "certificação PMP")
+     * Soft skills contextualizadas (ex: "comunicação técnica", "resolução de problemas complexos")
+   - Normalize os termos (ex: "Python 3.11" → "Python", "JS" → "JavaScript").
 
-REGRAS DE EXTRAÇÃO:
-- Capture termos técnicos mesmo quando aparecem sozinhos (ex: SQL, AWS)
-- Mantenha termos compostos completos (ex: "gestão de projetos", não separar em "gestão" e "projetos")
-- Inclua variações relevantes de termos (ex: se menciona "Product Owner" e "PO", inclua ambos)
-- Capture termos específicos do setor/indústria
-- Mantenha siglas e acrônimos relevantes (ex: KPI, B2B)
-- Inclua competências comportamentais específicas e relevantes
+2. **Análise do Currículo**:
+   - Processe o texto do currículo com:
+     * Reconhecimento de padrões semânticos
+     * Cross-referencing de sinônimos (ex: "JS" → "JavaScript")
+     * Identificação de experiências quantificáveis (ex: "reduziu tempo de deploy em 40%")
 
-OBRIGATORIAMENTE EXCLUIR:
-- Benefícios (vale refeição, plano de saúde, etc)
-- Modalidade de trabalho (remoto, híbrido)
-- Localização e horário
-- Informações sobre contratação
-- Remuneração e comissões
-- Outros benefícios (cursos, dress code)
-- Informações sobre a empresa
-- Prazos e datas
-- Idiomas
-- Termos genéricos sem contexto específico
+3. **Comparação Crítica**:
+   - Gere uma tabela comparativa com:
+     [✅] Palavras-chave correspondentes (com evidências do texto)
+     [⚠️] Habilidades relacionadas mas não explícitas
+     [❌] Requisitos ausentes críticos
+
+4. **Recomendações Estratégicas**:
+   - Para cada ausência relevante:
+     * Sugira onde incluir no currículo (experiência, resumo, habilidades)
+     * Dê exemplos contextualizados
+
+5. **Mensagem Motivacional**:
+   - Gere uma mensagem personalizada com base na taxa de match
+
+SIMILARIDADE SEMÂNTICA CALCULADA: {avg_similarity:.2f}
 
 CURRÍCULO:
 {resume_text}
@@ -172,17 +169,25 @@ CURRÍCULO:
 DESCRIÇÕES DAS VAGAS:
 {chr(10).join(job_descriptions)}
 
-Retorne um JSON com a seguinte estrutura:
+Formato de Saída (JSON):
 {{
-    "extracted_keywords": {{
-        "all_keywords": ["lista de todas as palavras-chave extraídas das vagas"]
-    }},
-    "keywords": {{
-        "present": ["palavras-chave encontradas no currículo - Em: seção sugerida"],
-        "missing": ["palavras-chave não encontradas no currículo - Add em: seção sugerida"]
-    }},
-    "recommendations": ["lista de recomendações práticas para melhorar o currículo"],
-    "conclusion": "conclusão geral da análise"
+  "job_keywords": {{
+    "technical_skills": [],
+    "activities": [],
+    "requirements": []
+  }},
+  "resume_matches": {{
+    "exact_matches": [],
+    "partial_matches": [],
+    "missing_critical": []
+  }},
+  "semantic_similarity": {{
+    "score": "{avg_similarity:.2f}",
+    "matches": []
+  }},
+  "missing_keywords_with_recommendations": [],
+  "match_percentage": "",
+  "motivational_message": ""
 }}"""
 
         logger.info("Enviando requisição para OpenAI")
@@ -192,7 +197,7 @@ Retorne um JSON com a seguinte estrutura:
             messages=[
                 {
                     "role": "system", 
-                    "content": "Você é um especialista em ATS e análise de currículos com vasta experiência em recrutamento e seleção. Forneça análises detalhadas e recomendações práticas. Retorne APENAS o JSON solicitado, sem texto adicional."
+                    "content": "Você é um especialista em ATS e análise de currículos. Forneça análises detalhadas focando em correspondências exatas e semânticas. Retorne APENAS o JSON solicitado, sem texto adicional."
                 },
                 {"role": "user", "content": prompt}
             ],
@@ -202,50 +207,39 @@ Retorne um JSON com a seguinte estrutura:
         )
 
         logger.info("Resposta recebida da OpenAI")
-        logger.info(f"Conteúdo da resposta: {response.choices[0].message.content}")
+        
+        logger.debug(f"Resposta completa da OpenAI: {response.choices[0].message.content}")
 
-        try:
-            analysis_result = json.loads(response.choices[0].message.content)
-            logger.info("JSON decodificado com sucesso")
-            
-            # Filtrar as palavras-chave para remover benefícios e informações adicionais
-            if 'extracted_keywords' in analysis_result and 'all_keywords' in analysis_result['extracted_keywords']:
-                filtered_keywords = filter_relevant_keywords(analysis_result['extracted_keywords']['all_keywords'])
-                analysis_result['extracted_keywords']['all_keywords'] = filtered_keywords
-                
-                # Atualizar as listas de palavras presentes e ausentes com base nas palavras filtradas
-                if 'keywords' in analysis_result:
-                    if 'present' in analysis_result['keywords']:
-                        analysis_result['keywords']['present'] = [
-                            kw for kw in analysis_result['keywords']['present']
-                            if any(filtered_kw in kw for filtered_kw in filtered_keywords)
-                        ]
-                    
-                    if 'missing' in analysis_result['keywords']:
-                        analysis_result['keywords']['missing'] = [
-                            kw for kw in analysis_result['keywords']['missing']
-                            if any(filtered_kw in kw for filtered_kw in filtered_keywords)
-                        ]
-            
-            required_keys = ["extracted_keywords", "keywords", "recommendations", "conclusion"]
-            if all(key in analysis_result for key in required_keys):
-                return analysis_result
-            else:
-                logger.error("JSON incompleto - faltam chaves obrigatórias")
-                missing_keys = [key for key in required_keys if key not in analysis_result]
-                logger.error(f"Chaves faltantes: {missing_keys}")
-                return {
-                    "error": "Resposta incompleta da análise",
-                    "missing_keys": missing_keys
-                }
+        raw_analysis = json.loads(response.choices[0].message.content)
+        
+        # Verifica campos obrigatórios
+        required_fields = [
+            'job_keywords',
+            'resume_matches',
+            'semantic_similarity',
+            'missing_keywords_with_recommendations',
+            'match_percentage',
+            'motivational_message'
+        ]
+        
+        missing_fields = [field for field in required_fields if field not in raw_analysis]
+        
+        if missing_fields:
+            logger.error(f"Campos ausentes na resposta: {missing_fields}")
+            logger.error(f"Resposta recebida: {raw_analysis}")
+            raise ValueError(f"Campos obrigatórios ausentes: {missing_fields}")
 
-        except json.JSONDecodeError as e:
-            logger.error(f"Erro ao decodificar JSON: {e}")
-            return {"error": "Erro ao processar resposta da análise"}
+        return raw_analysis
 
+    except json.JSONDecodeError as e:
+        logger.error(f"Erro ao decodificar JSON da resposta: {e}")
+        raise ValueError(f"Erro ao processar resposta: {str(e)}")
     except Exception as e:
-        logger.error(f"Erro geral na análise: {e}")
-        return {"error": f"Erro geral na análise: {str(e)}"}
+        logger.error(f"Erro na análise do currículo: {str(e)}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Erro durante o processo de análise: {str(e)}"
+        )
 
 def normalize_text_for_comparison(text: str) -> str:
     """

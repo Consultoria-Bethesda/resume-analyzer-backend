@@ -1,44 +1,32 @@
+# Environment files
+.env
+.env.*
+!.env.example
+*.env
+.env.development
+.env.production
+.env.staging
+.env.local
+.env.test
+
 # Python
 __pycache__/
 *.py[cod]
-*$py.class
+*.pyc
+venv/
 *.so
 .Python
-venv/
-.env
 
 # IDE
-.idea/
 .vscode/
+.idea/
 *.swp
 *.swo
-
-# Environment variables
-.env
-.env.local
-.env.*.local
 
 # Logs
 *.log
 logs/
 
-# Database
-*.sqlite3
-*.db
-
-# Testing
-.coverage
-htmlcov/
-.pytest_cache/
-.tox/
-.coverage.*
-nosetests.xml
-coverage.xml
-*.cover
-
 # Alembic
 alembic/versions/*
 !alembic/versions/.gitkeep
-
-# Misc
-.DS_Store

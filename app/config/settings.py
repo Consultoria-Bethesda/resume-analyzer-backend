@@ -1,51 +1,45 @@
-from pydantic_settings import BaseSettings
+from pydantic_settings import BaseSettings, SettingsConfigDict
 
 class Settings(BaseSettings):
-    GOOGLE_CLIENT_ID: str
-    GOOGLE_CLIENT_SECRET: str
-    FRONTEND_URL: str
-    BASE_URL: str
+    # Environment
+    ENVIRONMENT: str = "development"
     
-    # Variáveis do Railway
-    PGHOST: str
-    PGPORT: str
-    PGUSER: str
-    PGPASSWORD: str
-    PGDATABASE: str
+    # Database settings
+    PGUSER: str = "postgres"
+    PGPASSWORD: str = "postgres"
+    PGHOST: str = "db"
+    PGPORT: str = "5432"
+    PGDATABASE: str = "resume_analyzer"
     
-    OPENAI_API_KEY: str
-    STRIPE_SECRET_KEY: str
-    STRIPE_PUBLIC_KEY: str
-    STRIPE_WEBHOOK_SECRET: str
-    STRIPE_PRICE_ID: str
-    SECRET_KEY: str
-    SMTP_HOST: str = "smtp.gmail.com"
-    SMTP_PORT: int = 587
-    SMTP_USER: str = ""
-    SMTP_PASSWORD: str = ""
-    ENVIRONMENT: str = "development"  # Valor padrão é development
+    # Alias para manter compatibilidade
+    DB_USER: str = PGUSER
+    DB_PASSWORD: str = PGPASSWORD
+    DB_HOST: str = PGHOST
+    DB_PORT: str = PGPORT
+    DB_NAME: str = PGDATABASE
 
-    class Config:
-        env_file = ".env"
+    # URLs
+    FRONTEND_URL: str = "http://localhost:3000"
+    BACKEND_URL: str = "http://localhost:8000"
 
-    @property
-    def DB_HOST(self) -> str:
-        return self.PGHOST
+    # Authentication
+    GOOGLE_CLIENT_ID: str | None = None
+    GOOGLE_CLIENT_SECRET: str | None = None
+    SECRET_KEY: str = "8f45d7f2a1b3c6e9d8a4b7c2e5f8a9d6b3c7e1f4a2d5b8e3f6c9a2d5b8e3f6"
 
-    @property
-    def DB_PORT(self) -> str:
-        return self.PGPORT
+    # OpenAI
+    OPENAI_API_KEY: str | None = None
 
-    @property
-    def DB_USER(self) -> str:
-        return self.PGUSER
+    # Stripe
+    STRIPE_SECRET_KEY: str | None = None
+    STRIPE_PUBLIC_KEY: str | None = None
+    STRIPE_WEBHOOK_SECRET: str | None = None
+    STRIPE_PRICE_ID: str | None = None
 
-    @property
-    def DB_PASSWORD(self) -> str:
-        return self.PGPASSWORD
-
-    @property
-    def DB_NAME(self) -> str:
-        return self.PGDATABASE
+    model_config = SettingsConfigDict(
+        env_file=".env",
+        case_sensitive=True,
+        extra="allow"
+    )
 
 settings = Settings()
