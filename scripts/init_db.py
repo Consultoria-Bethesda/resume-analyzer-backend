@@ -1,22 +1,19 @@
 import os
 import sys
-# Adiciona o diretório raiz ao PYTHONPATH
-sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-
+import logging
 from sqlalchemy import create_engine
 from app.database import Base
 from app.config.settings import settings
-import logging
 
-# Importa todos os modelos para garantir que sejam registrados
-from app.models import user, user_credits
-
+# Configuração do logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 def init_db():
     try:
-        database_url = f"postgresql://{settings.DB_USER}:{settings.DB_PASSWORD}@{settings.DB_HOST}:{settings.DB_PORT}/{settings.DB_NAME}"
+        database_url = f"postgresql://{settings.PGUSER}:{settings.PGPASSWORD}@{settings.PGHOST}:{settings.PGPORT}/{settings.PGDATABASE}"
+        logger.info(f"Conectando ao banco de dados: {database_url}")
+        
         engine = create_engine(database_url)
         
         # Cria todas as tabelas

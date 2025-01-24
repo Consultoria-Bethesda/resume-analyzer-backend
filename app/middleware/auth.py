@@ -20,9 +20,16 @@ async def get_current_user(token: str = Depends(oauth2_scheme), db: Session = De
     )
     
     try:
-        logger.info(f"Token recebido: {token[:10]}...")  # Log apenas dos primeiros 10 caracteres
+        if not token:
+            logger.error("Token não fornecido")
+            raise credentials_exception
+            
+        # Remover prefixo "Bearer " se presente
+        if token.startswith('Bearer '):
+            token = token.split(' ')[1]
+            
+        logger.info(f"Token recebido (primeiros 20 caracteres): {token[:20]}...")
         email = decode_token(token)
-        logger.info(f"Email decodificado do token: {email}")
         
         if email is None:
             logger.error("Email não encontrado no token")

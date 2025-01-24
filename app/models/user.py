@@ -17,6 +17,7 @@ class User(Base):
     google_id = Column(String, unique=True, nullable=True)
     auth_provider = Column(String, nullable=False, default='email')  # 'email' ou 'google'
     is_active = Column(Boolean, default=False)
+    is_verified = Column(Boolean, default=False)  # Adicionando campo is_verified
     
     # Colunas para reset de senha
     reset_password_token = Column(String, nullable=True)

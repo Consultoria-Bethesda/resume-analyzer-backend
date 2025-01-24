@@ -6,15 +6,21 @@ from sqlalchemy import pool
 
 from alembic import context
 
-import os
+# Importa os modelos
 import sys
+import os
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from app.database import Base
-from app.models import *
+from app.models.user import User
+from app.models.user_credits import UserCredits
 
+# this is the Alembic Config object, which provides
+# access to the values within the .ini file in use.
 config = context.config
 
+# Interpret the config file for Python logging.
+# This line sets up loggers basically.
 if config.config_file_name is not None:
     fileConfig(config.config_file_name)
 
